@@ -2,6 +2,17 @@ import streamlit as st
 from dataclasses import dataclass
 
 # -----------------------------
+# Conversion Helpers
+# -----------------------------
+
+def american_to_prob(odds):
+    if odds > 0:
+        return 100 / (odds + 100)
+    else:
+        return -odds / (-odds + 100)
+
+
+# -----------------------------
 # Data Classes
 # -----------------------------
 
@@ -39,7 +50,6 @@ class ThreeLegResult:
 # -----------------------------
 
 def compute_three_leg_fair(eight: EightWay, fair: SA_SB_Fair) -> ThreeLegResult:
-    # Extract from 8-way
     p111 = eight.p111
     p110 = eight.p110
     p101 = eight.p101
@@ -83,38 +93,48 @@ def compute_three_leg_fair(eight: EightWay, fair: SA_SB_Fair) -> ThreeLegResult:
 # Streamlit UI
 # -----------------------------
 
-st.title("📊 3‑Leg SGP Fair Value Calculator")
-st.write("""
-This tool extracts the **incremental 3‑way correlation** from your 8‑way devig,
-then applies that correlation to your authoritative **SA** and **SB** fair values
-to compute the final **3‑leg fair probability**.
-""")
+st.title("📊 3‑Leg SGP Fair Value Calculator (American Odds Input)")
 
-st.header("Step 1 — Enter 8‑Way Vig‑Free Probabilities")
+st.header("Step 1 — Enter 8‑Way American Odds")
 
 cols = st.columns(4)
-p111 = cols[0].number_input("P(1,1,1)", min_value=0.0, max_value=1.0, step=0.0001)
-p110 = cols[1].number_input("P(1,1,0)", min_value=0.0, max_value=1.0, step=0.0001)
-p101 = cols[2].number_input("P(1,0,1)", min_value=0.0, max_value=1.0, step=0.0001)
-p100 = cols[3].number_input("P(1,0,0)", min_value=0.0, max_value=1.0, step=0.0001)
+o111 = cols[0].number_input("Odds(1,1,1)", step=1)
+o110 = cols[1].number_input("Odds(1,1,0)", step=1)
+o101 = cols[2].number_input("Odds(1,0,1)", step=1)
+o100 = cols[3].number_input("Odds(1,0,0)", step=1)
 
 cols2 = st.columns(4)
-p011 = cols2[0].number_input("P(0,1,1)", min_value=0.0, max_value=1.0, step=0.0001)
-p010 = cols2[1].number_input("P(0,1,0)", min_value=0.0, max_value=1.0, step=0.0001)
-p001 = cols2[2].number_input("P(0,0,1)", min_value=0.0, max_value=1.0, step=0.0001)
-p000 = cols2[3].number_input("P(0,0,0)", min_value=0.0, max_value=1.0, step=0.0001)
+o011 = cols2[0].number_input("Odds(0,1,1)", step=1)
+o010 = cols2[1].number_input("Odds(0,1,0)", step=1)
+o001 = cols2[2].number_input("Odds(0,0,1)", step=1)
+o000 = cols2[3].number_input("Odds(0,0,0)", step=1)
 
-eight = EightWay(p111, p110, p101, p100, p011, p010, p001, p000)
+eight = EightWay(
+    american_to_prob(o111),
+    american_to_prob(o110),
+    american_to_prob(o101),
+    american_to_prob(o100),
+    american_to_prob(o011),
+    american_to_prob(o010),
+    american_to_prob(o001),
+    american_to_prob(o000)
+)
 
-st.header("Step 2 — Enter Authoritative Fair Values (S, A, B, SA, SB)")
+st.header("Step 2 — Enter Authoritative American Odds (S, A, B, SA, SB)")
 
-pS = st.number_input("P(S)", min_value=0.0, max_value=1.0, step=0.0001)
-pA = st.number_input("P(A)", min_value=0.0, max_value=1.0, step=0.0001)
-pB = st.number_input("P(B)", min_value=0.0, max_value=1.0, step=0.0001)
-pSA = st.number_input("P(SA)", min_value=0.0, max_value=1.0, step=0.0001)
-pSB = st.number_input("P(SB)", min_value=0.0, max_value=1.0, step=0.0001)
+oS = st.number_input("Odds(S)", step=1)
+oA = st.number_input("Odds(A)", step=1)
+oB = st.number_input("Odds(B)", step=1)
+oSA = st.number_input("Odds(SA)", step=1)
+oSB = st.number_input("Odds(SB)", step=1)
 
-fair = SA_SB_Fair(pS, pA, pB, pSA, pSB)
+fair = SA_SB_Fair(
+    american_to_prob(oS),
+    american_to_prob(oA),
+    american_to_prob(oB),
+    american_to_prob(oSA),
+    american_to_prob(oSB)
+)
 
 if st.button("Compute 3‑Leg Fair Value"):
     result = compute_three_leg_fair(eight, fair)
