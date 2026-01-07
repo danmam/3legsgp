@@ -11,6 +11,17 @@ def american_to_prob(odds):
     else:
         return -odds / (-odds + 100)
 
+def prob_to_american(p):
+    if p <= 0:
+        return float("inf")
+    if p >= 1:
+        return float("inf")
+    dec = 1 / p
+    if dec >= 2:
+        return int((dec - 1) * 100)
+    else:
+        return int(-100 / (dec - 1))
+
 
 # -----------------------------
 # Data Classes
@@ -18,14 +29,14 @@ def american_to_prob(odds):
 
 @dataclass
 class EightWay:
-    p111: float
-    p110: float
-    p101: float
-    p100: float
-    p011: float
-    p010: float
-    p001: float
-    p000: float
+    p111: float  # S=1, A=1, B=1
+    p110: float  # S=1, A=1, B=0
+    p101: float  # S=1, A=0, B=1
+    p100: float  # S=1, A=0, B=0
+    p011: float  # S=0, A=1, B=1
+    p010: float  # S=0, A=1, B=0
+    p001: float  # S=0, A=0, B=1
+    p000: float  # S=0, A=0, B=0
 
 @dataclass
 class SA_SB_Fair:
@@ -43,6 +54,8 @@ class ThreeLegResult:
     pA_given_S: float
     pB_given_S: float
     pAB_given_S_final: float
+    american_final: float
+    american_indep: float
 
 
 # -----------------------------
@@ -85,7 +98,9 @@ def compute_three_leg_fair(eight: EightWay, fair: SA_SB_Fair) -> ThreeLegResult:
         pSAB_indep=pSAB_indep,
         pA_given_S=pA_given_S,
         pB_given_S=pB_given_S,
-        pAB_given_S_final=pAB_given_S_final
+        pAB_given_S_final=pAB_given_S_final,
+        american_final=prob_to_american(pSAB_final),
+        american_indep=prob_to_american(pSAB_indep)
     )
 
 
@@ -94,20 +109,26 @@ def compute_three_leg_fair(eight: EightWay, fair: SA_SB_Fair) -> ThreeLegResult:
 # -----------------------------
 
 st.title("📊 3‑Leg SGP Fair Value Calculator (American Odds Input)")
+st.write("""
+**8‑way inputs are labeled as (S, A, B) in that exact order.**  
+Example:  
+- (1,1,1) means **S=1, A=1, B=1**  
+- (1,0,1) means **S=1, A=0, B=1**
+""")
 
-st.header("Step 1 — Enter 8‑Way American Odds")
+st.header("Step 1 — Enter 8‑Way American Odds (S, A, B)")
 
 cols = st.columns(4)
-o111 = cols[0].number_input("Odds(1,1,1)", step=1)
-o110 = cols[1].number_input("Odds(1,1,0)", step=1)
-o101 = cols[2].number_input("Odds(1,0,1)", step=1)
-o100 = cols[3].number_input("Odds(1,0,0)", step=1)
+o111 = cols[0].number_input("Odds(S=1,A=1,B=1)", step=1)
+o110 = cols[1].number_input("Odds(S=1,A=1,B=0)", step=1)
+o101 = cols[2].number_input("Odds(S=1,A=0,B=1)", step=1)
+o100 = cols[3].number_input("Odds(S=1,A=0,B=0)", step=1)
 
 cols2 = st.columns(4)
-o011 = cols2[0].number_input("Odds(0,1,1)", step=1)
-o010 = cols2[1].number_input("Odds(0,1,0)", step=1)
-o001 = cols2[2].number_input("Odds(0,0,1)", step=1)
-o000 = cols2[3].number_input("Odds(0,0,0)", step=1)
+o011 = cols2[0].number_input("Odds(S=0,A=1,B=1)", step=1)
+o010 = cols2[1].number_input("Odds(S=0,A=1,B=0)", step=1)
+o001 = cols2[2].number_input("Odds(S=0,A=0,B=1)", step=1)
+o000 = cols2[3].number_input("Odds(S=0,A=0,B=0)", step=1)
 
 eight = EightWay(
     american_to_prob(o111),
@@ -148,9 +169,11 @@ if st.button("Compute 3‑Leg Fair Value"):
 
     st.subheader("📉 Independence Baseline")
     st.metric("P(SAB) under independence", f"{result.pSAB_indep:.6f}")
+    st.metric("American Odds (Independence)", f"{result.american_indep}")
 
     st.subheader("🔥 Final 3‑Leg Fair Value (Adjusted by κ)")
     st.metric("P(SAB) Final", f"{result.pSAB_final:.6f}")
+    st.metric("American Odds (Final)", f"{result.american_final}")
 
     st.subheader("🧮 Final Joint Conditional")
     st.write(f"P(A ∩ B | S) Final = {result.pAB_given_S_final:.6f}")
