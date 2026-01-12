@@ -1,4 +1,3 @@
 streamlit==1.32.0
-dataclasses
-streamlit
-scipy
+numpy>=1.20.0
+scipy>=1.11.0
