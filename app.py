@@ -44,10 +44,45 @@ def remove_juice_power(probs, k=None):
             else:
                 high = mid
         k = mid
-    
+
     fair_probs = [p ** k for p in probs]
     total = sum(fair_probs)
     return [p / total for p in fair_probs]
+
+def devig(probs, devig_method):
+    """Remove juice from a list of raw implied probabilities using the chosen method."""
+    if devig_method == "Proportional":
+        return remove_juice_proportional(probs)
+    else:  # Power/Shin
+        return remove_juice_power(probs)
+
+def binary_correlation(p_joint, p_x, p_y):
+    """Calculate the Pearson correlation between two binary variables.
+
+    cor(X,Y) = (P(X∩Y) - P(X)P(Y)) / sqrt(P(X)(1-P(X)) P(Y)(1-P(Y)))
+    """
+    if p_x <= 0 or p_x >= 1 or p_y <= 0 or p_y >= 1:
+        return 0.0
+    cov = p_joint - p_x * p_y
+    std_x = np.sqrt(p_x * (1 - p_x))
+    std_y = np.sqrt(p_y * (1 - p_y))
+    if std_x == 0 or std_y == 0:
+        return 0.0
+    return cov / (std_x * std_y)
+
+def joint_from_marginals_and_corr(p_x, p_y, rho):
+    """Compute P(X∩Y) for two binary events given their marginals and correlation.
+
+    P(X∩Y) = P(X)P(Y) + rho * sqrt(P(X)(1-P(X))) * sqrt(P(Y)(1-P(Y)))
+
+    The result is clipped to the Fréchet bounds so it stays a valid probability.
+    """
+    std_x = np.sqrt(p_x * (1 - p_x))
+    std_y = np.sqrt(p_y * (1 - p_y))
+    p_joint = p_x * p_y + rho * std_x * std_y
+    lower = max(0.0, p_x + p_y - 1.0)
+    upper = min(p_x, p_y)
+    return float(np.clip(p_joint, lower, upper))
 
 
 # -----------------------------
@@ -92,6 +127,58 @@ class ThreeLegResult:
 
 
 # -----------------------------
+# Two-Way Market Helpers
+# -----------------------------
+
+@dataclass
+class PairResult:
+    pJoint_fair: float          # fair P(X∩Y) using authoritative marginals + market correlation
+    rho: float                  # correlation extracted from the 2-way market
+    pX_market: float            # P(X) implied by the (devigged) 2-way market
+    pY_market: float            # P(Y) implied by the (devigged) 2-way market
+    pJoint_market: float        # devigged P(X∩Y) straight from the 2-way market (the OO corner)
+    corners_fair: tuple         # devigged (OO, OU, UO, UU)
+    juice_total: float          # raw sum of the 4 corner probabilities (pre-devig)
+
+def pair_from_corners(odds_oo, odds_ou, odds_uo, odds_uu,
+                      pX_auth, pY_auth, devig_method) -> PairResult:
+    """Turn the 4 corner American odds of a 2-way market into a fair joint probability.
+
+    Corners (X = first leg, Y = second leg, with O = leg hits, U = leg misses):
+        OO -> both legs hit          == the 2-way parlay we ultimately want
+        OU -> X hits,  Y misses
+        UO -> X misses, Y hits
+        UU -> neither hits
+
+    Steps:
+      1. Devig the 4 corners so they sum to 1.
+      2. Read the market-implied marginals and the correlation between X and Y.
+      3. Recompute the fair joint P(X∩Y) using the *authoritative* single-leg
+         marginals (pX_auth, pY_auth) combined with the market correlation.
+    """
+    raw = [american_to_prob(o) for o in (odds_oo, odds_ou, odds_uo, odds_uu)]
+    juice_total = sum(raw)
+
+    p_oo, p_ou, p_uo, p_uu = devig(raw, devig_method)
+
+    pX_market = p_oo + p_ou
+    pY_market = p_oo + p_uo
+
+    rho = binary_correlation(p_oo, pX_market, pY_market)
+    pJoint_fair = joint_from_marginals_and_corr(pX_auth, pY_auth, rho)
+
+    return PairResult(
+        pJoint_fair=pJoint_fair,
+        rho=rho,
+        pX_market=pX_market,
+        pY_market=pY_market,
+        pJoint_market=p_oo,
+        corners_fair=(p_oo, p_ou, p_uo, p_uu),
+        juice_total=juice_total,
+    )
+
+
+# -----------------------------
 # Copula Methods
 # -----------------------------
 
@@ -111,19 +198,8 @@ def extract_correlation_from_8way(eight_fair: EightWay):
     pAB = eight_fair.p111 + eight_fair.p011
     
     # Calculate pairwise correlations using Pearson correlation for binary variables
-    # For binary variables: cor(X,Y) = (P(XY) - P(X)P(Y)) / sqrt(P(X)(1-P(X))P(Y)(1-P(Y)))
-    
-    def binary_correlation(p_joint, p_x, p_y):
-        """Calculate correlation between two binary variables."""
-        if p_x == 0 or p_x == 1 or p_y == 0 or p_y == 1:
-            return 0
-        cov = p_joint - p_x * p_y
-        std_x = np.sqrt(p_x * (1 - p_x))
-        std_y = np.sqrt(p_y * (1 - p_y))
-        if std_x == 0 or std_y == 0:
-            return 0
-        return cov / (std_x * std_y)
-    
+    # (binary_correlation is defined at module level)
+
     rho_SA = binary_correlation(pSA, pS, pA)
     rho_SB = binary_correlation(pSB, pS, pB)
     rho_AB = binary_correlation(pAB, pA, pB)
@@ -362,8 +438,11 @@ Example:
 - (1,1,1) means **S=1, A=1, B=1**  
 - (1,0,1) means **S=1, A=0, B=1**
 
-This calculator uses a **Gaussian copula** to extract correlation structure from 8-way odds 
+This calculator uses a **Gaussian copula** to extract correlation structure from 8-way odds
 and apply it to authoritative 2-leg parlay odds.
+
+The 2-leg parlay (SA, SB) fair values are **derived** from the 4 corner odds of each 2-way
+market combined with the authoritative single-leg odds — you no longer enter SA/SB directly.
 """)
 
 # Devigging method selection
@@ -398,23 +477,74 @@ eight = EightWay(
     american_to_prob(o000)
 )
 
-st.header("Step 2 — Enter Authoritative American Odds (S, A, B, SA, SB)")
+st.header("Step 2 — Enter Authoritative Single-Leg American Odds (S, A, B)")
 
 oS = st.number_input("Odds(S)", value=0, step=1)
 oA = st.number_input("Odds(A)", value=0, step=1)
 oB = st.number_input("Odds(B)", value=0, step=1)
-oSA = st.number_input("Odds(SA)", value=0, step=1)
-oSB = st.number_input("Odds(SB)", value=0, step=1)
 
-fair = FairOdds(
-    american_to_prob(oS),
-    american_to_prob(oA),
-    american_to_prob(oB),
-    american_to_prob(oSA),
-    american_to_prob(oSB)
-)
+pS_auth = american_to_prob(oS)
+pA_auth = american_to_prob(oA)
+pB_auth = american_to_prob(oB)
+
+st.header("Step 3 — Enter the 4 Corner Odds of Each 2-Way Market")
+st.write("""
+Instead of entering the SA and SB parlay odds directly, enter the **4 corners** of each
+2-way market. The app devigs them, extracts the **correlation** between the two legs,
+and rebuilds the fair 2-way value from the authoritative single-leg odds above plus that
+correlation.
+
+Corner labels use **O = leg hits**, **U = leg misses** (e.g. for S&A, *OO* = both hit,
+*OU* = S hits / A misses). The *OO* corner is the actual 2-leg parlay.
+""")
+
+st.subheader("S & A market")
+sa_cols = st.columns(4)
+oSA_OO = sa_cols[0].number_input("Odds(S hit, A hit)",   value=0, step=1, key="sa_oo")
+oSA_OU = sa_cols[1].number_input("Odds(S hit, A miss)",  value=0, step=1, key="sa_ou")
+oSA_UO = sa_cols[2].number_input("Odds(S miss, A hit)",  value=0, step=1, key="sa_uo")
+oSA_UU = sa_cols[3].number_input("Odds(S miss, A miss)", value=0, step=1, key="sa_uu")
+
+st.subheader("S & B market")
+sb_cols = st.columns(4)
+oSB_OO = sb_cols[0].number_input("Odds(S hit, B hit)",   value=0, step=1, key="sb_oo")
+oSB_OU = sb_cols[1].number_input("Odds(S hit, B miss)",  value=0, step=1, key="sb_ou")
+oSB_UO = sb_cols[2].number_input("Odds(S miss, B hit)",  value=0, step=1, key="sb_uo")
+oSB_UU = sb_cols[3].number_input("Odds(S miss, B miss)", value=0, step=1, key="sb_uu")
 
 if st.button("Compute 3-Leg Fair Value"):
+    # Derive fair SA and SB from the 4-corner markets + authoritative marginals
+    sa_pair = pair_from_corners(oSA_OO, oSA_OU, oSA_UO, oSA_UU,
+                                pS_auth, pA_auth, devig_method)
+    sb_pair = pair_from_corners(oSB_OO, oSB_OU, oSB_UO, oSB_UU,
+                                pS_auth, pB_auth, devig_method)
+
+    fair = FairOdds(
+        pS_auth,
+        pA_auth,
+        pB_auth,
+        sa_pair.pJoint_fair,
+        sb_pair.pJoint_fair,
+    )
+
+    # Show how SA and SB were derived from their 2-way markets
+    st.subheader("🧩 Derived 2-Way Fair Values")
+    derived_df = {
+        "Pair": ["SA", "SB"],
+        "Correlation (ρ)": [f"{sa_pair.rho:.4f}", f"{sb_pair.rho:.4f}"],
+        "Market P(both)": [f"{sa_pair.pJoint_market:.6f}", f"{sb_pair.pJoint_market:.6f}"],
+        "Fair P(both)": [f"{sa_pair.pJoint_fair:.6f}", f"{sb_pair.pJoint_fair:.6f}"],
+        "Fair American": [f"{prob_to_american(sa_pair.pJoint_fair)}",
+                          f"{prob_to_american(sb_pair.pJoint_fair)}"],
+        "Market juice": [f"{(sa_pair.juice_total - 1) * 100:.2f}%",
+                         f"{(sb_pair.juice_total - 1) * 100:.2f}%"],
+    }
+    st.table(derived_df)
+    st.caption(
+        "Fair P(both) = P(S)·P(leg) + ρ·√(P(S)(1−P(S)))·√(P(leg)(1−P(leg))), "
+        "using authoritative single-leg marginals and the correlation extracted from the 2-way market."
+    )
+
     result = compute_three_leg_fair(eight, fair, devig_method)
 
     # Show juice information
