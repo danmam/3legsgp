@@ -346,7 +346,7 @@ def compute_sgp(eight_odds, oS, oA, oB, sa_odds, sb_odds, ab_odds, devig_method)
     what is available:
 
       * marginals P(S),P(A),P(B): authoritative single  >  pair market(s)  >  8-way
-      * correlations ρ_SA,ρ_SB,ρ_AB: dedicated pair market  >  8-way  >  independence(0)
+      * correlations ρ_SA,ρ_SB,ρ_AB: 8-way  >  dedicated pair market  >  independence(0)
       * final estimate: if the 8-way is present we use the constrained copula
         (it carries genuine 3rd-order structure); otherwise the Gaussian copula
         over the resolved marginals + pairwise correlation matrix.
@@ -458,7 +458,7 @@ def compute_sgp(eight_odds, oS, oA, oB, sa_odds, sb_odds, ab_odds, devig_method)
     pA = marginals['A'][0]
     pB = marginals['B'][0]
 
-    # ---- Resolve each correlation: pair market > 8-way > independence ---------
+    # ---- Resolve each correlation: 8-way > pair market > independence ---------
     eight_corr = None
     if corr8 is not None:
         eight_corr = {'SA': corr8[0, 1], 'SB': corr8[0, 2], 'AB': corr8[1, 2]}
@@ -470,10 +470,10 @@ def compute_sgp(eight_odds, oS, oA, oB, sa_odds, sb_odds, ab_odds, devig_method)
         if eight_corr is not None:
             candidates.append(("8-way", eight_corr[name]))
 
-        if pair is not None:
-            chosen, source = pair.rho, f"{name} 2-way market"
-        elif eight_corr is not None:
+        if eight_corr is not None:
             chosen, source = eight_corr[name], "8-way"
+        elif pair is not None:
+            chosen, source = pair.rho, f"{name} 2-way market"
         else:
             chosen, source = 0.0, "assumed independent"
             warnings.append(f"ρ_{name} has no source; assuming independence (0).")
@@ -594,7 +594,7 @@ What each input contributes:
 
 Resolution priority when a quantity is supplied by more than one input:
 **marginals:** single → 2-way market → 8-way.&nbsp;&nbsp;
-**correlations:** dedicated 2-way market → 8-way → assume independent.
+**correlations:** 8-way → dedicated 2-way market → assume independent.
 If the 8-way is provided it drives the final value (it carries real 3rd-order structure);
 otherwise the Gaussian copula over the resolved marginals + correlations is used.
 """)
